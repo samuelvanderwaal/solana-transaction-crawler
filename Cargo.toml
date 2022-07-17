@@ -1,0 +1,15 @@
+[package]
+name = "solana-crawler"
+version = "0.0.1"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rayon = "1.5.3"
+serde = "1.0.139"
+solana-client = "~1.9.29"
+solana-sdk = "~1.9.29"
+solana-transaction-status = "~1.9.29"
+thiserror = "1.0.31"
+tokio = "1.14.1"
