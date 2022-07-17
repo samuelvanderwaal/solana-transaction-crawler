@@ -14,7 +14,8 @@ use solana_sdk::pubkey::Pubkey;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let candy_machine_pubkey = Pubkey::from_str("cndy3Z4yapfJBmL3ShUp5exZKqR3z33thTzeNMm2gRZ").unwrap();
+    // DeGods CMV1 id
+    let candy_machine_pubkey = Pubkey::from_str("9MynErYQ5Qi6obp4YwwdoDmXkZ1hYVtPUqYmJJ3rZ9Kn").unwrap();
 
     let url = "https://ssc-dao.genesysgo.net/"
     let client = solana_client::rpc_client::RpcClient::new(url);
