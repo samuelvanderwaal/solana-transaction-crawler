@@ -15,9 +15,10 @@ use std::{
 use tokio::sync::Semaphore;
 // use tokio::sync::Semaphore;
 
-use crate::{errors::CrawlError, filters::*};
+use crate::{constants::CMV2_PROGRAM_ID, errors::CrawlError, filters::*};
 
 // Public API
+pub type CrawledAccounts = HashMap<String, HashSet<String>>;
 
 pub struct IxAccount {
     name: String,
@@ -125,7 +126,31 @@ impl Crawler {
     }
 }
 
-pub type CrawledAccounts = HashMap<String, HashSet<String>>;
+// Associated functions for common crawl patterns
+impl Crawler {
+    pub async fn get_cmv2_mints(
+        client: RpcClient,
+        candy_machine_pubkey: Pubkey,
+    ) -> Result<CrawledAccounts, CrawlError> {
+        let has_program_id = TxHasProgramId::new(CMV2_PROGRAM_ID);
+        let successful_tx = SuccessfulTxFilter;
+        let ix_program_id = IxProgramIdFilter::new(CMV2_PROGRAM_ID);
+        let ix_min_accounts = IxMinAccountsFilter::new(16);
+        let metadata_account = IxAccount::new("metadata_account", 4);
+        let mint_account = IxAccount::new("mint_account", 5);
+
+        let mut crawler = Crawler::new(client, candy_machine_pubkey);
+        crawler
+            .add_tx_filter(has_program_id)
+            .add_tx_filter(successful_tx)
+            .add_ix_filter(ix_program_id)
+            .add_ix_filter(ix_min_accounts)
+            .add_account_index(metadata_account)
+            .add_account_index(mint_account);
+
+        crawler.run().await
+    }
+}
 
 // Private methods
 impl Crawler {

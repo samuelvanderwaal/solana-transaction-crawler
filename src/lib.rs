@@ -1,4 +1,3 @@
-pub mod candy_machine;
 pub mod constants;
 pub mod crawler;
 pub mod errors;
