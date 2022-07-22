@@ -2,8 +2,10 @@ use super::*;
 
 pub enum IxNumberAccounts {
     LessThan(usize),
-    GreaterThan(usize),
+    LessThanOrEqual(usize),
     EqualTo(usize),
+    GreaterThan(usize),
+    GreaterThanOrEqual(usize),
 }
 
 impl IxFilter for IxNumberAccounts {
@@ -11,8 +13,10 @@ impl IxFilter for IxNumberAccounts {
         match ix {
             UiParsedInstruction::PartiallyDecoded(ix) => match self {
                 IxNumberAccounts::LessThan(n) => ix.accounts.len() < *n,
-                IxNumberAccounts::GreaterThan(n) => ix.accounts.len() > *n,
+                IxNumberAccounts::LessThanOrEqual(n) => ix.accounts.len() <= *n,
                 IxNumberAccounts::EqualTo(n) => ix.accounts.len() == *n,
+                IxNumberAccounts::GreaterThan(n) => ix.accounts.len() > *n,
+                IxNumberAccounts::GreaterThanOrEqual(n) => ix.accounts.len() >= *n,
             },
             // This filter does not apply to parsed accounts.
             UiParsedInstruction::Parsed(_ix) => true,
