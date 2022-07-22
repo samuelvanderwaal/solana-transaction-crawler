@@ -1,18 +1,22 @@
 use super::*;
 
-pub struct IxMinAccountsFilter {
-    min_accounts: usize,
+pub enum IxNumberAccounts {
+    LessThan(usize),
+    LessThanOrEqual(usize),
+    EqualTo(usize),
+    GreaterThan(usize),
+    GreaterThanOrEqual(usize),
 }
 
-impl IxMinAccountsFilter {
-    pub fn new(min_accounts: usize) -> Self {
-        Self { min_accounts }
-    }
-}
-
-impl IxFilter for IxMinAccountsFilter {
+impl IxFilter for IxNumberAccounts {
     fn filter(&self, ix: &UiCompiledInstruction, _account_keys: Vec<String>) -> bool {
-        ix.accounts.len() >= self.min_accounts
+        match self {
+            IxNumberAccounts::LessThan(n) => ix.accounts.len() < *n,
+            IxNumberAccounts::LessThanOrEqual(n) => ix.accounts.len() <= *n,
+            IxNumberAccounts::EqualTo(n) => ix.accounts.len() == *n,
+            IxNumberAccounts::GreaterThan(n) => ix.accounts.len() > *n,
+            IxNumberAccounts::GreaterThanOrEqual(n) => ix.accounts.len() >= *n,
+        }
     }
 }
 

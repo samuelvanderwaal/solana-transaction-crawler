@@ -135,7 +135,7 @@ impl Crawler {
         let has_program_id = TxHasProgramId::new(CMV2_PROGRAM_ID);
         let successful_tx = SuccessfulTxFilter;
         let ix_program_id = IxProgramIdFilter::new(CMV2_PROGRAM_ID);
-        let ix_min_accounts = IxMinAccountsFilter::new(16);
+        let ix_min_accounts = IxNumberAccounts::GreaterThanOrEqual(16);
         let metadata_account = IxAccount::new("metadata_account", 4);
         let mint_account = IxAccount::new("mint_account", 5);
 
