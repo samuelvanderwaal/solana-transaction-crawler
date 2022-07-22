@@ -18,7 +18,12 @@ impl TxFilter for Cmv2TxFilter {
         match &tx.transaction.transaction {
             EncodedTransaction::Json(ui_tx) => match &ui_tx.message {
                 UiMessage::Raw(msg) => msg.account_keys.contains(&CMV2_PROGRAM_ID.to_string()),
-                _ => panic!("not a raw message"),
+                UiMessage::Parsed(msg) => {
+                    let accounts: Vec<String> =
+                        msg.account_keys.iter().map(|a| a.pubkey.clone()).collect();
+
+                    accounts.contains(&CMV2_PROGRAM_ID.to_string())
+                }
             },
             _ => panic!("not Json encoded"),
         }
@@ -42,7 +47,11 @@ impl TxFilter for TxHasProgramId {
         match &tx.transaction.transaction {
             EncodedTransaction::Json(ui_tx) => match &ui_tx.message {
                 UiMessage::Raw(msg) => msg.account_keys.contains(&self.program_id),
-                _ => panic!("not a raw message"),
+                UiMessage::Parsed(msg) => {
+                    let accounts: Vec<String> =
+                        msg.account_keys.iter().map(|a| a.pubkey.clone()).collect();
+                    accounts.contains(&self.program_id)
+                }
             },
             _ => panic!("not Json encoded"),
         }

@@ -1,6 +1,6 @@
 use crate::constants::*;
 use solana_transaction_status::{
-    EncodedConfirmedTransaction, EncodedTransaction, UiCompiledInstruction, UiMessage,
+    EncodedConfirmedTransaction, EncodedTransaction, UiMessage, UiParsedInstruction,
 };
 
 pub mod ix;
@@ -14,5 +14,5 @@ pub trait TxFilter {
 }
 
 pub trait IxFilter {
-    fn filter(&self, ix: &UiCompiledInstruction, account_keys: Vec<String>) -> bool;
+    fn filter(&self, ix: &UiParsedInstruction) -> bool;
 }

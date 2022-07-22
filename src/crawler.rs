@@ -3,7 +3,7 @@ use rayon::prelude::*;
 use solana_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient};
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Signature};
 use solana_transaction_status::{
-    EncodedConfirmedTransaction, EncodedTransaction, UiCompiledInstruction, UiMessage,
+    EncodedConfirmedTransaction, EncodedTransaction, UiInstruction, UiMessage, UiParsedInstruction,
     UiTransactionEncoding,
 };
 use std::{
@@ -89,33 +89,42 @@ impl Crawler {
         let ix_accounts = Arc::new(Mutex::new(HashMap::new()));
 
         filtered_transactions.par_iter().for_each(|tx| {
-            let (account_keys, instructions) = match tx.transaction.transaction {
+            let instructions: Vec<&UiParsedInstruction> = match tx.transaction.transaction {
                 EncodedTransaction::Json(ref ui_tx) => match &ui_tx.message {
-                    UiMessage::Raw(raw_message) => {
-                        (&raw_message.account_keys, &raw_message.instructions)
+                    UiMessage::Raw(_msg) => {
+                        panic!("not a parsed message");
                     }
-                    _ => panic!("not a raw message"),
+                    UiMessage::Parsed(msg) => msg
+                        .instructions
+                        .iter()
+                        .map(|ix| match ix {
+                            UiInstruction::Parsed(ix) => ix,
+                            _ => panic!("not a parsed instruction"),
+                        })
+                        .collect::<Vec<&UiParsedInstruction>>(),
                 },
                 _ => panic!("Not JSON encoded transaction"),
             };
 
-            let filtered_instructions: Vec<&UiCompiledInstruction> = instructions
-                .iter()
-                .filter(|ix| {
-                    self.ix_filters
-                        .iter()
-                        .all(|filter| filter.filter(ix, account_keys.clone()))
-                })
+            let filtered_instructions: Vec<&UiParsedInstruction> = instructions
+                .into_iter()
+                .filter(|ix| self.ix_filters.iter().all(|filter| filter.filter(ix)))
                 .collect();
 
             for ix in filtered_instructions {
                 for a in self.account_indices.iter() {
-                    let address = &account_keys[ix.accounts[a.index] as usize];
-                    let mut ix_accounts = ix_accounts.lock().unwrap();
-                    let ix_account = ix_accounts
-                        .entry(a.name.to_string())
-                        .or_insert(HashSet::new());
-                    ix_account.insert(address.to_string());
+                    match ix {
+                        UiParsedInstruction::PartiallyDecoded(ix) => {
+                            let address = &ix.accounts[a.index];
+                            let mut ix_accounts = ix_accounts.lock().unwrap();
+
+                            let ix_account = ix_accounts
+                                .entry(a.name.to_string())
+                                .or_insert_with(HashSet::new);
+                            ix_account.insert(address.to_string());
+                        }
+                        UiParsedInstruction::Parsed(_ix) => (),
+                    }
                 }
             }
         });
@@ -135,7 +144,7 @@ impl Crawler {
         let has_program_id = TxHasProgramId::new(CMV2_PROGRAM_ID);
         let successful_tx = SuccessfulTxFilter;
         let ix_program_id = IxProgramIdFilter::new(CMV2_PROGRAM_ID);
-        let ix_min_accounts = IxMinAccountsFilter::new(16);
+        let ix_num_accounts = IxNumberAccounts::GreaterThan(16);
         let metadata_account = IxAccount::new("metadata_account", 4);
         let mint_account = IxAccount::new("mint_account", 5);
 
@@ -144,7 +153,7 @@ impl Crawler {
             .add_tx_filter(has_program_id)
             .add_tx_filter(successful_tx)
             .add_ix_filter(ix_program_id)
-            .add_ix_filter(ix_min_accounts)
+            .add_ix_filter(ix_num_accounts)
             .add_account_index(metadata_account)
             .add_account_index(mint_account);
 
@@ -253,7 +262,7 @@ async fn get_transaction(
     signature: Signature,
 ) -> Result<EncodedConfirmedTransaction, CrawlError> {
     let transaction = client
-        .get_transaction(&signature, UiTransactionEncoding::Json)
+        .get_transaction(&signature, UiTransactionEncoding::JsonParsed)
         .map_err(|err| CrawlError::ClientError(err.kind))?;
 
     Ok(transaction)
