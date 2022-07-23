@@ -44,3 +44,19 @@ impl IxFilter for IxProgramIdFilter {
         }
     }
 }
+
+pub struct IxMintToFilter;
+
+impl IxFilter for IxMintToFilter {
+    fn filter(&self, ix: &UiParsedInstruction) -> bool {
+        match ix {
+            UiParsedInstruction::Parsed(ix) => ix
+                .parsed
+                .get("type")
+                .map(|type_| type_ == "mintTo")
+                .unwrap_or(false),
+            // This filter only applies to fully parsed instructions.
+            UiParsedInstruction::PartiallyDecoded(_ix) => false,
+        }
+    }
+}

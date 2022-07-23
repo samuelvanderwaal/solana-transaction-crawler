@@ -1,5 +1,4 @@
 use rayon::prelude::*;
-// use serde::Serialize;
 use solana_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient};
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Signature};
 use solana_transaction_status::{
@@ -8,28 +7,39 @@ use solana_transaction_status::{
 };
 use std::{
     collections::{HashMap, HashSet},
-    // collections::HashSet,
     str::FromStr,
     sync::{Arc, Mutex},
 };
 use tokio::sync::Semaphore;
-// use tokio::sync::Semaphore;
 
-use crate::{constants::CMV2_PROGRAM_ID, errors::CrawlError, filters::*};
+use crate::{
+    constants::{CMV2_PROGRAM_ID, TOKEN_METADATA_PROGAM_ID},
+    errors::CrawlError,
+    filters::*,
+};
 
 // Public API
 pub type CrawledAccounts = HashMap<String, HashSet<String>>;
 
+// Instruction Accounts represent the specific accounts users wish to retrieve from an instruction.
+// For unparsed instructions the user must specify the account index and the name they wish to it be labeled.
+// For parsed instructions the users must specify the actual name as it's represented in the instruction.
 pub struct IxAccount {
     name: String,
-    index: usize,
+    index: Option<usize>,
 }
 
 impl IxAccount {
-    pub fn new(name: &str, index: usize) -> Self {
-        IxAccount {
+    pub fn unparsed(name: &str, index: usize) -> Self {
+        Self {
             name: name.to_string(),
-            index,
+            index: Some(index),
+        }
+    }
+    pub fn parsed(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            index: None,
         }
     }
 }
@@ -111,19 +121,37 @@ impl Crawler {
                 .filter(|ix| self.ix_filters.iter().all(|filter| filter.filter(ix)))
                 .collect();
 
+            // Fetch accounts from instructions
             for ix in filtered_instructions {
                 for a in self.account_indices.iter() {
                     match ix {
                         UiParsedInstruction::PartiallyDecoded(ix) => {
-                            let address = &ix.accounts[a.index];
-                            let mut ix_accounts = ix_accounts.lock().unwrap();
+                            if let Some(index) = a.index {
+                                let address = &ix.accounts[index];
+                                let mut ix_accounts = ix_accounts.lock().unwrap();
 
-                            let ix_account = ix_accounts
-                                .entry(a.name.to_string())
-                                .or_insert_with(HashSet::new);
-                            ix_account.insert(address.to_string());
+                                let ix_account = ix_accounts
+                                    .entry(a.name.to_string())
+                                    .or_insert_with(HashSet::new);
+                                ix_account.insert(address.to_string());
+                            }
                         }
-                        UiParsedInstruction::Parsed(_ix) => (),
+                        UiParsedInstruction::Parsed(ix) => {
+                            if a.index.is_none() {
+                                let pointer = format!("/info/{}", a.name);
+                                let address_opt = ix.parsed.pointer(&pointer);
+                                if let Some(address) = address_opt {
+                                    let mut ix_accounts = ix_accounts.lock().unwrap();
+
+                                    let address = address.as_str().unwrap().trim_matches('\\');
+
+                                    let ix_account = ix_accounts
+                                        .entry(a.name.to_string())
+                                        .or_insert_with(HashSet::new);
+                                    ix_account.insert(address.to_string());
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -145,8 +173,8 @@ impl Crawler {
         let successful_tx = SuccessfulTxFilter;
         let ix_program_id = IxProgramIdFilter::new(CMV2_PROGRAM_ID);
         let ix_num_accounts = IxNumberAccounts::GreaterThanOrEqual(16);
-        let metadata_account = IxAccount::new("metadata_account", 4);
-        let mint_account = IxAccount::new("mint_account", 5);
+        let metadata_account = IxAccount::unparsed("metadata_account", 4);
+        let mint_account = IxAccount::unparsed("mint_account", 5);
 
         let mut crawler = Crawler::new(client, candy_machine_pubkey);
         crawler
@@ -156,6 +184,21 @@ impl Crawler {
             .add_ix_filter(ix_num_accounts)
             .add_account_index(metadata_account)
             .add_account_index(mint_account);
+
+        crawler.run().await
+    }
+
+    pub async fn get_first_verified_creator_mints(
+        client: RpcClient,
+        creator: Pubkey,
+    ) -> Result<CrawledAccounts, CrawlError> {
+        let has_program_id = TxHasProgramId::new(TOKEN_METADATA_PROGAM_ID);
+        let successful_tx = SuccessfulTxFilter;
+
+        let mut crawler = Crawler::new(client, creator);
+        crawler
+            .add_tx_filter(has_program_id)
+            .add_tx_filter(successful_tx);
 
         crawler.run().await
     }
