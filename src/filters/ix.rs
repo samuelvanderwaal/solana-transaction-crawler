@@ -9,13 +9,17 @@ pub enum IxNumberAccounts {
 }
 
 impl IxFilter for IxNumberAccounts {
-    fn filter(&self, ix: &UiCompiledInstruction, _account_keys: Vec<String>) -> bool {
-        match self {
-            IxNumberAccounts::LessThan(n) => ix.accounts.len() < *n,
-            IxNumberAccounts::LessThanOrEqual(n) => ix.accounts.len() <= *n,
-            IxNumberAccounts::EqualTo(n) => ix.accounts.len() == *n,
-            IxNumberAccounts::GreaterThan(n) => ix.accounts.len() > *n,
-            IxNumberAccounts::GreaterThanOrEqual(n) => ix.accounts.len() >= *n,
+    fn filter(&self, ix: &UiParsedInstruction) -> bool {
+        match ix {
+            UiParsedInstruction::PartiallyDecoded(ix) => match self {
+                IxNumberAccounts::LessThan(n) => ix.accounts.len() < *n,
+                IxNumberAccounts::LessThanOrEqual(n) => ix.accounts.len() <= *n,
+                IxNumberAccounts::EqualTo(n) => ix.accounts.len() == *n,
+                IxNumberAccounts::GreaterThan(n) => ix.accounts.len() > *n,
+                IxNumberAccounts::GreaterThanOrEqual(n) => ix.accounts.len() >= *n,
+            },
+            // This filter does not apply to parsed accounts.
+            UiParsedInstruction::Parsed(_ix) => true,
         }
     }
 }
@@ -33,7 +37,10 @@ impl IxProgramIdFilter {
 }
 
 impl IxFilter for IxProgramIdFilter {
-    fn filter(&self, ix: &UiCompiledInstruction, account_keys: Vec<String>) -> bool {
-        account_keys[ix.program_id_index as usize] == self.program_id
+    fn filter(&self, ix: &UiParsedInstruction) -> bool {
+        match ix {
+            UiParsedInstruction::Parsed(ix) => ix.program_id == self.program_id,
+            UiParsedInstruction::PartiallyDecoded(ix) => ix.program_id == self.program_id,
+        }
     }
 }
