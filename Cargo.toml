@@ -1,6 +1,6 @@
 [package]
 name = "solana-transaction-crawler"
-version = "0.0.0"
+version = "0.0.1"
 edition = "2021"
 description = "A library to make it easier to crawl Solana transactions."
 repository = "https://github.com/samuelvanderwaal/solana-transaction-crawler"
