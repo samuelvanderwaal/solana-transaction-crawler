@@ -1,5 +1,7 @@
 use super::*;
 
+/// This filter passes through instructions that match the equality specified by the variant and only
+/// applies to PartiallyDecoded instructions. Fully parsed instructions are automatically passed through.
 pub enum IxNumberAccounts {
     LessThan(usize),
     LessThanOrEqual(usize),
@@ -24,6 +26,7 @@ impl IxFilter for IxNumberAccounts {
     }
 }
 
+/// This filter checks that the instruction has the specified program id.
 pub struct IxProgramIdFilter {
     program_id: String,
 }
@@ -45,7 +48,7 @@ impl IxFilter for IxProgramIdFilter {
     }
 }
 
-/// Matches the Base58 encoded data for an instruction.
+/// This filter passes through instructions that match the Base58 encoded data for an instruction.
 pub struct IxDataFilter {
     data: String,
 }
@@ -68,6 +71,8 @@ impl IxFilter for IxDataFilter {
     }
 }
 
+/// This filter only applies to fully parsed instructions, and passes through any instruction with the type "mintTo".
+/// This filter is useful for getting the mintTo instruction from SPL token calls.
 pub struct IxMintToFilter;
 
 impl IxFilter for IxMintToFilter {

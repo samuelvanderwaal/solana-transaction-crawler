@@ -15,11 +15,15 @@ use tokio::{sync::Semaphore, time::Instant};
 use crate::{constants::*, errors::CrawlError, filters::*};
 
 // Public API
+
+/// This this type returned by running a crawler. Each account type is stored under a label
+/// and a unique set of the accounts is associated with it.
 pub type CrawledAccounts = HashMap<String, HashSet<String>>;
 
-// Instruction Accounts represent the specific accounts users wish to retrieve from an instruction.
-// For unparsed instructions the user must specify the account index and the name they wish to it be labeled.
-// For parsed instructions the users must specify the actual name as it's represented in the instruction.
+/// Instruction Accounts represent the specific accounts users wish to retrieve from an instruction.
+/// For unparsed instructions the user must specify the account index and the name they wish to it be labeled.
+/// For parsed instructions the users must specify the actual name as it's represented in the instruction:
+/// e.g. "mint" for the mint account in a SPL token call.
 pub struct IxAccount {
     name: String,
     index: Option<usize>,
@@ -40,6 +44,7 @@ impl IxAccount {
     }
 }
 
+/// This is the main struct used in the library and stores all the crawler data.
 pub struct Crawler {
     client: Arc<RpcClient>,
     address: Pubkey,
@@ -50,6 +55,7 @@ pub struct Crawler {
 }
 
 impl Crawler {
+    /// Create a new Crawler object.
     pub fn new(client: RpcClient, address: Pubkey) -> Self {
         Crawler {
             client: Arc::new(client),
@@ -61,16 +67,19 @@ impl Crawler {
         }
     }
 
+    /// Add a transaction filter to the Crawler. These filtesr are additive and will be applied as logical ANDs.
     pub fn add_tx_filter<F: TxFilter + 'static + Send + Sync>(&mut self, filter: F) -> &mut Self {
         self.tx_filters.push(Box::new(filter));
         self
     }
 
+    /// Add an instruction filter to the Crawler. These filters are additive and will be applied as logical ANDs.
     pub fn add_ix_filter<F: IxFilter + 'static + Send + Sync>(&mut self, filter: F) -> &mut Self {
         self.ix_filters.push(Box::new(filter));
         self
     }
 
+    /// Add an instruction filter to be applied as a logical OR to the Crawler.
     pub fn add_ix_or_filters<F: IxFilter + 'static + Send + Sync>(
         &mut self,
         filters: Vec<F>,
@@ -81,22 +90,25 @@ impl Crawler {
         self
     }
 
+    /// Add an account index to the Crawler. These indices are used to retrieve specific accounts from an instruction.
     pub fn add_account_index(&mut self, index: IxAccount) -> &mut Self {
         self.account_indices.push(index);
         self
     }
 
+    /// Add multiple account indexes.
     pub fn account_indices(&mut self, indices: Vec<IxAccount>) -> &mut Self {
         self.account_indices = indices;
         self
     }
 
+    /// Run the crawler. This will return a CrawledAccounts object or a CrawlError.
     pub async fn run(self) -> Result<CrawledAccounts, CrawlError> {
         let start = Instant::now();
         let signatures = self.get_all_signatures_for_id().await?;
         let sigs_time = Instant::now();
         println!(
-            "Retrieved signatures {:?} in {:?}",
+            "Retrieved {:?} signatures in {:?}",
             signatures.len(),
             sigs_time - start
         );
@@ -104,10 +116,9 @@ impl Crawler {
 
         let tx_time = Instant::now();
         println!(
-            "Retrieved transactions {:?} in {:?}, time since start: {:?}",
+            "Retrieved {:?} transactions in {:?}",
             transactions.len(),
             tx_time - sigs_time,
-            tx_time - start
         );
 
         let filtered_transactions: Vec<&EncodedConfirmedTransaction> = transactions
@@ -116,12 +127,6 @@ impl Crawler {
             .collect();
 
         println!("filtered tranasctions: {:?}", filtered_transactions.len());
-        let filtered_tx_time = Instant::now();
-        println!(
-            "Filtered transactions in {:?}, time since start: {:?}",
-            filtered_tx_time - tx_time,
-            filtered_tx_time - start
-        );
 
         let ix_accounts = Arc::new(Mutex::new(HashMap::new()));
 
@@ -162,7 +167,7 @@ impl Crawler {
             let filtered_instructions: Vec<&UiParsedInstruction> = instructions
                 .into_iter()
                 .filter(|ix| self.ix_filters.iter().all(|filter| filter.filter(ix)))
-                .filter(|ix| self.ix_or_filters.iter().any(|filter| filter.filter(ix)))
+                // .filter(|ix| self.ix_or_filters.iter().any(|filter| filter.filter(ix)))
                 .collect();
 
             // Fetch accounts from instructions
@@ -200,12 +205,6 @@ impl Crawler {
                 }
             }
         });
-        let parse_ixs_time = Instant::now();
-        println!(
-            "Parsed instructions in {:?}, time since start: {:?}",
-            parse_ixs_time - filtered_tx_time,
-            parse_ixs_time - start
-        );
 
         let crawled_accounts = Arc::try_unwrap(ix_accounts).unwrap().into_inner().unwrap();
 
@@ -215,6 +214,9 @@ impl Crawler {
 
 // Associated functions for common crawl patterns
 impl Crawler {
+    /// Get all mint and metadata accounts for a give candy machine v2 id or candy machine v2 creator.
+    /// This only parses mintNFT instructions from Candy Machine V2 so is not directly equivalent to get_first_verified_creator_mints
+    /// which is a more general call.
     pub async fn get_cmv2_mints(
         client: RpcClient,
         candy_machine_pubkey: Pubkey,
@@ -222,8 +224,8 @@ impl Crawler {
         let has_program_id = TxHasProgramId::new(CMV2_PROGRAM_ID);
         let ix_program_id = IxProgramIdFilter::new(CMV2_PROGRAM_ID);
         let ix_num_accounts = IxNumberAccounts::GreaterThanOrEqual(16);
-        let metadata_account = IxAccount::unparsed("metadata_account", 4);
-        let mint_account = IxAccount::unparsed("mint_account", 5);
+        let metadata_account = IxAccount::unparsed("metadata", 4);
+        let mint_account = IxAccount::unparsed("mint", 5);
 
         let mut crawler = Crawler::new(client, candy_machine_pubkey);
         crawler
@@ -238,6 +240,9 @@ impl Crawler {
         crawler.run().await
     }
 
+    /// Get all mint accounts for the given first verified creator. This works by by finding all the
+    /// `create_master_edition` and `create_master_edition_v3` instructions from calls to the token-metadata program.
+    /// This is more general than get_cmv2_mints as it can find mints not created via a candy machine.
     pub async fn get_first_verified_creator_mints(
         client: RpcClient,
         creator: Pubkey,
