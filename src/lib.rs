@@ -22,7 +22,7 @@
 //! ```
 //! use anyhow::Result;
 //! use solana_client::rpc_client::RpcClient;
-//! use solana_crawler::{
+//! use solana_transaction_crawler::{
 //!     crawler::{Crawler, IxAccount},
 //!     filters::{IxNumberAccounts, SuccessfulTxFilter, TxHasProgramId},
 //! };
@@ -78,7 +78,7 @@
 //! ```
 //! use anyhow::Result;
 //! use solana_client::rpc_client::RpcClient;
-//! use solana_crawler::crawler::Crawler;
+//! use solana_transaction_crawler::crawler::Crawler;
 //! use solana_program::pubkey;
 //!
 //! #[tokio::main]
