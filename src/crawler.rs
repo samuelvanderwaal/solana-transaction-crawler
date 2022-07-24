@@ -10,13 +10,9 @@ use std::{
     str::FromStr,
     sync::{Arc, Mutex},
 };
-use tokio::sync::Semaphore;
+use tokio::{sync::Semaphore, time::Instant};
 
-use crate::{
-    constants::{CMV2_PROGRAM_ID, TOKEN_METADATA_PROGAM_ID},
-    errors::CrawlError,
-    filters::*,
-};
+use crate::{constants::*, errors::CrawlError, filters::*};
 
 // Public API
 pub type CrawledAccounts = HashMap<String, HashSet<String>>;
@@ -49,6 +45,7 @@ pub struct Crawler {
     address: Pubkey,
     tx_filters: Vec<Box<dyn TxFilter + Send + Sync>>,
     ix_filters: Vec<Box<dyn IxFilter + Send + Sync>>,
+    ix_or_filters: Vec<Box<dyn IxFilter + Send + Sync>>,
     account_indices: Vec<IxAccount>,
 }
 
@@ -59,6 +56,7 @@ impl Crawler {
             address,
             tx_filters: Vec::new(),
             ix_filters: Vec::new(),
+            ix_or_filters: Vec::new(),
             account_indices: Vec::new(),
         }
     }
@@ -73,6 +71,16 @@ impl Crawler {
         self
     }
 
+    pub fn add_ix_or_filters<F: IxFilter + 'static + Send + Sync>(
+        &mut self,
+        filters: Vec<F>,
+    ) -> &mut Self {
+        filters
+            .into_iter()
+            .for_each(|filter| self.ix_or_filters.push(Box::new(filter)));
+        self
+    }
+
     pub fn add_account_index(&mut self, index: IxAccount) -> &mut Self {
         self.account_indices.push(index);
         self
@@ -84,10 +92,23 @@ impl Crawler {
     }
 
     pub async fn run(self) -> Result<CrawledAccounts, CrawlError> {
+        let start = Instant::now();
         let signatures = self.get_all_signatures_for_id().await?;
+        let sigs_time = Instant::now();
+        println!(
+            "Retrieved signatures {:?} in {:?}",
+            signatures.len(),
+            sigs_time - start
+        );
         let transactions = self.get_transactions_from_signatures(signatures).await?;
 
-        println!("transactions: {:?}", transactions.len());
+        let tx_time = Instant::now();
+        println!(
+            "Retrieved transactions {:?} in {:?}, time since start: {:?}",
+            transactions.len(),
+            tx_time - sigs_time,
+            tx_time - start
+        );
 
         let filtered_transactions: Vec<&EncodedConfirmedTransaction> = transactions
             .iter()
@@ -95,11 +116,17 @@ impl Crawler {
             .collect();
 
         println!("filtered tranasctions: {:?}", filtered_transactions.len());
+        let filtered_tx_time = Instant::now();
+        println!(
+            "Filtered transactions in {:?}, time since start: {:?}",
+            filtered_tx_time - tx_time,
+            filtered_tx_time - start
+        );
 
         let ix_accounts = Arc::new(Mutex::new(HashMap::new()));
 
         filtered_transactions.par_iter().for_each(|tx| {
-            let instructions: Vec<&UiParsedInstruction> = match tx.transaction.transaction {
+            let mut instructions: Vec<&UiParsedInstruction> = match tx.transaction.transaction {
                 EncodedTransaction::Json(ref ui_tx) => match &ui_tx.message {
                     UiMessage::Raw(_msg) => {
                         panic!("not a parsed message");
@@ -116,9 +143,26 @@ impl Crawler {
                 _ => panic!("Not JSON encoded transaction"),
             };
 
+            // Get all inner instructions and add them to the instructions list.
+            if let Some(meta) = &tx.transaction.meta {
+                if let Some(inner_instructions) = &meta.inner_instructions {
+                    let mut parsed_ixs = inner_instructions
+                        .iter()
+                        .map(|ix| &ix.instructions)
+                        .flatten()
+                        .map(|ix| match ix {
+                            UiInstruction::Parsed(ix) => ix,
+                            _ => panic!("not a parsed instruction"),
+                        })
+                        .collect::<Vec<&UiParsedInstruction>>();
+                    instructions.append(&mut parsed_ixs);
+                }
+            }
+
             let filtered_instructions: Vec<&UiParsedInstruction> = instructions
                 .into_iter()
                 .filter(|ix| self.ix_filters.iter().all(|filter| filter.filter(ix)))
+                .filter(|ix| self.ix_or_filters.iter().any(|filter| filter.filter(ix)))
                 .collect();
 
             // Fetch accounts from instructions
@@ -156,6 +200,12 @@ impl Crawler {
                 }
             }
         });
+        let parse_ixs_time = Instant::now();
+        println!(
+            "Parsed instructions in {:?}, time since start: {:?}",
+            parse_ixs_time - filtered_tx_time,
+            parse_ixs_time - start
+        );
 
         let crawled_accounts = Arc::try_unwrap(ix_accounts).unwrap().into_inner().unwrap();
 
@@ -170,7 +220,6 @@ impl Crawler {
         candy_machine_pubkey: Pubkey,
     ) -> Result<CrawledAccounts, CrawlError> {
         let has_program_id = TxHasProgramId::new(CMV2_PROGRAM_ID);
-        let successful_tx = SuccessfulTxFilter;
         let ix_program_id = IxProgramIdFilter::new(CMV2_PROGRAM_ID);
         let ix_num_accounts = IxNumberAccounts::GreaterThanOrEqual(16);
         let metadata_account = IxAccount::unparsed("metadata_account", 4);
@@ -179,7 +228,8 @@ impl Crawler {
         let mut crawler = Crawler::new(client, candy_machine_pubkey);
         crawler
             .add_tx_filter(has_program_id)
-            .add_tx_filter(successful_tx)
+            .add_tx_filter(SuccessfulTxFilter)
+            .add_tx_filter(CmV2BotTaxTxFilter)
             .add_ix_filter(ix_program_id)
             .add_ix_filter(ix_num_accounts)
             .add_account_index(metadata_account)
@@ -192,13 +242,26 @@ impl Crawler {
         client: RpcClient,
         creator: Pubkey,
     ) -> Result<CrawledAccounts, CrawlError> {
+        // We're looking for all the create_master_edition and create_master_edition_v2 instructions and
+        // getting the mint accounts from them.
+        // Creating a master edition means it's a Metaplex NFT and not a SPL token or a Fungible Asset.
+        // The CREATE_MASTER_EDITION_DATA constant has the base58 encoded data for a create_master_edition call
+        // where the max_supply is set to be Some(0), so this also filters out master editions with prints.
+
         let has_program_id = TxHasProgramId::new(TOKEN_METADATA_PROGAM_ID);
-        let successful_tx = SuccessfulTxFilter;
+        let ix_program_id = IxProgramIdFilter::new(TOKEN_METADATA_PROGAM_ID);
+        let ix_data = IxDataFilter::new(CREATE_MASTER_EDITION_DATA);
+        let ix_data2 = IxDataFilter::new(CREATE_MASTER_EDITION_V3_DATA);
+        let mint = IxAccount::unparsed("mint", 1);
 
         let mut crawler = Crawler::new(client, creator);
         crawler
             .add_tx_filter(has_program_id)
-            .add_tx_filter(successful_tx);
+            .add_tx_filter(SuccessfulTxFilter)
+            .add_tx_filter(CmV2BotTaxTxFilter)
+            .add_ix_filter(ix_program_id)
+            .add_ix_or_filters(vec![ix_data, ix_data2])
+            .add_account_index(mint);
 
         crawler.run().await
     }

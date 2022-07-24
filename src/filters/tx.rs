@@ -11,6 +11,24 @@ impl TxFilter for SuccessfulTxFilter {
     }
 }
 
+pub struct CmV2BotTaxTxFilter;
+
+impl TxFilter for CmV2BotTaxTxFilter {
+    fn filter(&self, tx: &EncodedConfirmedTransaction) -> bool {
+        // Filter out bot tax transactions, pass through everything else.
+        match &tx.transaction.meta {
+            Some(meta) => {
+                if let Some(messages) = &meta.log_messages {
+                    !messages.contains(&CMV2_BOT_TAX_MSG.to_string())
+                } else {
+                    true
+                }
+            }
+            None => true,
+        }
+    }
+}
+
 pub struct Cmv2TxFilter;
 
 impl TxFilter for Cmv2TxFilter {

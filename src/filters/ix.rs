@@ -45,6 +45,29 @@ impl IxFilter for IxProgramIdFilter {
     }
 }
 
+/// Matches the Base58 encoded data for an instruction.
+pub struct IxDataFilter {
+    data: String,
+}
+
+impl IxDataFilter {
+    pub fn new(data: &str) -> Self {
+        Self {
+            data: data.to_string(),
+        }
+    }
+}
+
+impl IxFilter for IxDataFilter {
+    fn filter(&self, ix: &UiParsedInstruction) -> bool {
+        match ix {
+            UiParsedInstruction::PartiallyDecoded(ix) => ix.data == self.data,
+            // This filter does not apply to parsed accounts.
+            UiParsedInstruction::Parsed(_ix) => false,
+        }
+    }
+}
+
 pub struct IxMintToFilter;
 
 impl IxFilter for IxMintToFilter {
