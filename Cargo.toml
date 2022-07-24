@@ -1,9 +1,10 @@
 [package]
 name = "solana-transaction-crawler"
-version = "0.0.1"
+version = "0.0.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "A library to make it easier to crawl Solana transactions."
+repository = "https://github.com/samuelvanderwaal/solana-transaction-crawler"
+license = "Apache-2.0"
 
 [dependencies]
 rayon = "1.5.3"
