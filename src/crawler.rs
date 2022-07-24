@@ -1,5 +1,4 @@
 use rayon::prelude::*;
-// use serde::Serialize;
 use solana_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient};
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Signature};
 use solana_transaction_status::{
@@ -8,76 +7,119 @@ use solana_transaction_status::{
 };
 use std::{
     collections::{HashMap, HashSet},
-    // collections::HashSet,
     str::FromStr,
     sync::{Arc, Mutex},
 };
-use tokio::sync::Semaphore;
-// use tokio::sync::Semaphore;
+use tokio::{sync::Semaphore, time::Instant};
 
-use crate::{constants::CMV2_PROGRAM_ID, errors::CrawlError, filters::*};
+use crate::{constants::*, errors::CrawlError, filters::*};
 
 // Public API
+
+/// This this type returned by running a crawler. Each account type is stored under a label
+/// and a unique set of the accounts is associated with it.
 pub type CrawledAccounts = HashMap<String, HashSet<String>>;
 
+/// Instruction Accounts represent the specific accounts users wish to retrieve from an instruction.
+/// For unparsed instructions the user must specify the account index and the name they wish to it be labeled.
+/// For parsed instructions the users must specify the actual name as it's represented in the instruction:
+/// e.g. "mint" for the mint account in a SPL token call.
 pub struct IxAccount {
     name: String,
-    index: usize,
+    index: Option<usize>,
 }
 
 impl IxAccount {
-    pub fn new(name: &str, index: usize) -> Self {
-        IxAccount {
+    pub fn unparsed(name: &str, index: usize) -> Self {
+        Self {
             name: name.to_string(),
-            index,
+            index: Some(index),
+        }
+    }
+    pub fn parsed(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            index: None,
         }
     }
 }
 
+/// This is the main struct used in the library and stores all the crawler data.
 pub struct Crawler {
     client: Arc<RpcClient>,
     address: Pubkey,
     tx_filters: Vec<Box<dyn TxFilter + Send + Sync>>,
     ix_filters: Vec<Box<dyn IxFilter + Send + Sync>>,
+    ix_or_filters: Vec<Box<dyn IxFilter + Send + Sync>>,
     account_indices: Vec<IxAccount>,
 }
 
 impl Crawler {
+    /// Create a new Crawler object.
     pub fn new(client: RpcClient, address: Pubkey) -> Self {
         Crawler {
             client: Arc::new(client),
             address,
             tx_filters: Vec::new(),
             ix_filters: Vec::new(),
+            ix_or_filters: Vec::new(),
             account_indices: Vec::new(),
         }
     }
 
+    /// Add a transaction filter to the Crawler. These filtesr are additive and will be applied as logical ANDs.
     pub fn add_tx_filter<F: TxFilter + 'static + Send + Sync>(&mut self, filter: F) -> &mut Self {
         self.tx_filters.push(Box::new(filter));
         self
     }
 
+    /// Add an instruction filter to the Crawler. These filters are additive and will be applied as logical ANDs.
     pub fn add_ix_filter<F: IxFilter + 'static + Send + Sync>(&mut self, filter: F) -> &mut Self {
         self.ix_filters.push(Box::new(filter));
         self
     }
 
+    /// Add an instruction filter to be applied as a logical OR to the Crawler.
+    pub fn add_ix_or_filters<F: IxFilter + 'static + Send + Sync>(
+        &mut self,
+        filters: Vec<F>,
+    ) -> &mut Self {
+        filters
+            .into_iter()
+            .for_each(|filter| self.ix_or_filters.push(Box::new(filter)));
+        self
+    }
+
+    /// Add an account index to the Crawler. These indices are used to retrieve specific accounts from an instruction.
     pub fn add_account_index(&mut self, index: IxAccount) -> &mut Self {
         self.account_indices.push(index);
         self
     }
 
+    /// Add multiple account indexes.
     pub fn account_indices(&mut self, indices: Vec<IxAccount>) -> &mut Self {
         self.account_indices = indices;
         self
     }
 
+    /// Run the crawler. This will return a CrawledAccounts object or a CrawlError.
     pub async fn run(self) -> Result<CrawledAccounts, CrawlError> {
+        let start = Instant::now();
         let signatures = self.get_all_signatures_for_id().await?;
+        let sigs_time = Instant::now();
+        println!(
+            "Retrieved {:?} signatures in {:?}",
+            signatures.len(),
+            sigs_time - start
+        );
         let transactions = self.get_transactions_from_signatures(signatures).await?;
 
-        println!("transactions: {:?}", transactions.len());
+        let tx_time = Instant::now();
+        println!(
+            "Retrieved {:?} transactions in {:?}",
+            transactions.len(),
+            tx_time - sigs_time,
+        );
 
         let filtered_transactions: Vec<&EncodedConfirmedTransaction> = transactions
             .iter()
@@ -89,7 +131,7 @@ impl Crawler {
         let ix_accounts = Arc::new(Mutex::new(HashMap::new()));
 
         filtered_transactions.par_iter().for_each(|tx| {
-            let instructions: Vec<&UiParsedInstruction> = match tx.transaction.transaction {
+            let mut instructions: Vec<&UiParsedInstruction> = match tx.transaction.transaction {
                 EncodedTransaction::Json(ref ui_tx) => match &ui_tx.message {
                     UiMessage::Raw(_msg) => {
                         panic!("not a parsed message");
@@ -106,24 +148,59 @@ impl Crawler {
                 _ => panic!("Not JSON encoded transaction"),
             };
 
+            // Get all inner instructions and add them to the instructions list.
+            if let Some(meta) = &tx.transaction.meta {
+                if let Some(inner_instructions) = &meta.inner_instructions {
+                    let mut parsed_ixs = inner_instructions
+                        .iter()
+                        .map(|ix| &ix.instructions)
+                        .flatten()
+                        .map(|ix| match ix {
+                            UiInstruction::Parsed(ix) => ix,
+                            _ => panic!("not a parsed instruction"),
+                        })
+                        .collect::<Vec<&UiParsedInstruction>>();
+                    instructions.append(&mut parsed_ixs);
+                }
+            }
+
             let filtered_instructions: Vec<&UiParsedInstruction> = instructions
                 .into_iter()
                 .filter(|ix| self.ix_filters.iter().all(|filter| filter.filter(ix)))
+                // .filter(|ix| self.ix_or_filters.iter().any(|filter| filter.filter(ix)))
                 .collect();
 
+            // Fetch accounts from instructions
             for ix in filtered_instructions {
                 for a in self.account_indices.iter() {
                     match ix {
                         UiParsedInstruction::PartiallyDecoded(ix) => {
-                            let address = &ix.accounts[a.index];
-                            let mut ix_accounts = ix_accounts.lock().unwrap();
+                            if let Some(index) = a.index {
+                                let address = &ix.accounts[index];
+                                let mut ix_accounts = ix_accounts.lock().unwrap();
 
-                            let ix_account = ix_accounts
-                                .entry(a.name.to_string())
-                                .or_insert_with(HashSet::new);
-                            ix_account.insert(address.to_string());
+                                let ix_account = ix_accounts
+                                    .entry(a.name.to_string())
+                                    .or_insert_with(HashSet::new);
+                                ix_account.insert(address.to_string());
+                            }
                         }
-                        UiParsedInstruction::Parsed(_ix) => (),
+                        UiParsedInstruction::Parsed(ix) => {
+                            if a.index.is_none() {
+                                let pointer = format!("/info/{}", a.name);
+                                let address_opt = ix.parsed.pointer(&pointer);
+                                if let Some(address) = address_opt {
+                                    let mut ix_accounts = ix_accounts.lock().unwrap();
+
+                                    let address = address.as_str().unwrap().trim_matches('\\');
+
+                                    let ix_account = ix_accounts
+                                        .entry(a.name.to_string())
+                                        .or_insert_with(HashSet::new);
+                                    ix_account.insert(address.to_string());
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -137,25 +214,59 @@ impl Crawler {
 
 // Associated functions for common crawl patterns
 impl Crawler {
+    /// Get all mint and metadata accounts for a give candy machine v2 id or candy machine v2 creator.
+    /// This only parses mintNFT instructions from Candy Machine V2 so is not directly equivalent to get_first_verified_creator_mints
+    /// which is a more general call.
     pub async fn get_cmv2_mints(
         client: RpcClient,
         candy_machine_pubkey: Pubkey,
     ) -> Result<CrawledAccounts, CrawlError> {
         let has_program_id = TxHasProgramId::new(CMV2_PROGRAM_ID);
-        let successful_tx = SuccessfulTxFilter;
         let ix_program_id = IxProgramIdFilter::new(CMV2_PROGRAM_ID);
         let ix_num_accounts = IxNumberAccounts::GreaterThanOrEqual(16);
-        let metadata_account = IxAccount::new("metadata_account", 4);
-        let mint_account = IxAccount::new("mint_account", 5);
+        let metadata_account = IxAccount::unparsed("metadata", 4);
+        let mint_account = IxAccount::unparsed("mint", 5);
 
         let mut crawler = Crawler::new(client, candy_machine_pubkey);
         crawler
             .add_tx_filter(has_program_id)
-            .add_tx_filter(successful_tx)
+            .add_tx_filter(SuccessfulTxFilter)
+            .add_tx_filter(CmV2BotTaxTxFilter)
             .add_ix_filter(ix_program_id)
             .add_ix_filter(ix_num_accounts)
             .add_account_index(metadata_account)
             .add_account_index(mint_account);
+
+        crawler.run().await
+    }
+
+    /// Get all mint accounts for the given first verified creator. This works by by finding all the
+    /// `create_master_edition` and `create_master_edition_v3` instructions from calls to the token-metadata program.
+    /// This is more general than get_cmv2_mints as it can find mints not created via a candy machine.
+    pub async fn get_first_verified_creator_mints(
+        client: RpcClient,
+        creator: Pubkey,
+    ) -> Result<CrawledAccounts, CrawlError> {
+        // We're looking for all the create_master_edition and create_master_edition_v2 instructions and
+        // getting the mint accounts from them.
+        // Creating a master edition means it's a Metaplex NFT and not a SPL token or a Fungible Asset.
+        // The CREATE_MASTER_EDITION_DATA constant has the base58 encoded data for a create_master_edition call
+        // where the max_supply is set to be Some(0), so this also filters out master editions with prints.
+
+        let has_program_id = TxHasProgramId::new(TOKEN_METADATA_PROGAM_ID);
+        let ix_program_id = IxProgramIdFilter::new(TOKEN_METADATA_PROGAM_ID);
+        let ix_data = IxDataFilter::new(CREATE_MASTER_EDITION_DATA);
+        let ix_data2 = IxDataFilter::new(CREATE_MASTER_EDITION_V3_DATA);
+        let mint = IxAccount::unparsed("mint", 1);
+
+        let mut crawler = Crawler::new(client, creator);
+        crawler
+            .add_tx_filter(has_program_id)
+            .add_tx_filter(SuccessfulTxFilter)
+            .add_tx_filter(CmV2BotTaxTxFilter)
+            .add_ix_filter(ix_program_id)
+            .add_ix_or_filters(vec![ix_data, ix_data2])
+            .add_account_index(mint);
 
         crawler.run().await
     }

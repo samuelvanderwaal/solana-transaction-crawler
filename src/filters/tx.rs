@@ -1,5 +1,6 @@
 use super::*;
 
+/// This filter passes through all successful transactions, rejecting any with errors.
 pub struct SuccessfulTxFilter;
 
 impl TxFilter for SuccessfulTxFilter {
@@ -11,6 +12,27 @@ impl TxFilter for SuccessfulTxFilter {
     }
 }
 
+/// This filter passes through all transactions that do not have the CMV2 bot tax message in the logs.
+/// It is used to filter out transactions that succeeded but were bot taxed, so did not produce any NFT accounts.
+pub struct CmV2BotTaxTxFilter;
+
+impl TxFilter for CmV2BotTaxTxFilter {
+    fn filter(&self, tx: &EncodedConfirmedTransaction) -> bool {
+        // Filter out bot tax transactions, pass through everything else.
+        match &tx.transaction.meta {
+            Some(meta) => {
+                if let Some(messages) = &meta.log_messages {
+                    !messages.contains(&CMV2_BOT_TAX_MSG.to_string())
+                } else {
+                    true
+                }
+            }
+            None => true,
+        }
+    }
+}
+
+/// This filter passes through all transactions that have the Candy Machine V2 progarm id.
 pub struct Cmv2TxFilter;
 
 impl TxFilter for Cmv2TxFilter {
@@ -18,18 +40,18 @@ impl TxFilter for Cmv2TxFilter {
         match &tx.transaction.transaction {
             EncodedTransaction::Json(ui_tx) => match &ui_tx.message {
                 UiMessage::Raw(msg) => msg.account_keys.contains(&CMV2_PROGRAM_ID.to_string()),
-                UiMessage::Parsed(msg) => {
-                    let accounts: Vec<String> =
-                        msg.account_keys.iter().map(|a| a.pubkey.clone()).collect();
-
-                    accounts.contains(&CMV2_PROGRAM_ID.to_string())
-                }
+                UiMessage::Parsed(msg) => msg
+                    .account_keys
+                    .iter()
+                    .map(|a| a.pubkey.clone())
+                    .any(|a| a == *CMV2_PROGRAM_ID),
             },
             _ => panic!("not Json encoded"),
         }
     }
 }
 
+/// This filter allows specifying a custom program id and passes through any transactions that have it.
 pub struct TxHasProgramId {
     program_id: String,
 }
@@ -47,11 +69,11 @@ impl TxFilter for TxHasProgramId {
         match &tx.transaction.transaction {
             EncodedTransaction::Json(ui_tx) => match &ui_tx.message {
                 UiMessage::Raw(msg) => msg.account_keys.contains(&self.program_id),
-                UiMessage::Parsed(msg) => {
-                    let accounts: Vec<String> =
-                        msg.account_keys.iter().map(|a| a.pubkey.clone()).collect();
-                    accounts.contains(&self.program_id)
-                }
+                UiMessage::Parsed(msg) => msg
+                    .account_keys
+                    .iter()
+                    .map(|a| a.pubkey.clone())
+                    .any(|a| a == self.program_id),
             },
             _ => panic!("not Json encoded"),
         }
