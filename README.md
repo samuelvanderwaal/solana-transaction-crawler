@@ -1,4 +1,4 @@
-## Solana Crawler
+## Solana Transaction Crawler
 
 ### Minimum Example
 
