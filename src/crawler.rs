@@ -1,4 +1,5 @@
 use rayon::prelude::*;
+use retry::{delay::Fixed, retry};
 use solana_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient};
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Signature};
 use solana_transaction_status::{
@@ -16,7 +17,7 @@ use crate::{constants::*, errors::CrawlError, filters::*};
 
 // Public API
 
-/// This this type returned by running a crawler. Each account type is stored under a label
+/// This is the type returned by running a crawler. Each account type is stored under a label
 /// and a unique set of the accounts is associated with it.
 pub type CrawledAccounts = HashMap<String, HashSet<String>>;
 
@@ -52,6 +53,7 @@ pub struct Crawler {
     ix_filters: Vec<Box<dyn IxFilter + Send + Sync>>,
     ix_or_filters: Vec<Box<dyn IxFilter + Send + Sync>>,
     account_indices: Vec<IxAccount>,
+    concurrency_limit: usize,
 }
 
 impl Crawler {
@@ -64,6 +66,7 @@ impl Crawler {
             ix_filters: Vec::new(),
             ix_or_filters: Vec::new(),
             account_indices: Vec::new(),
+            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
         }
     }
 
@@ -102,6 +105,12 @@ impl Crawler {
         self
     }
 
+    /// Set the concurrency limit for the crawler. This is the number of concurrent requests to be made to the node.
+    pub fn set_concurrency_limit(&mut self, limit: usize) -> &mut Self {
+        self.concurrency_limit = limit;
+        self
+    }
+
     /// Run the crawler. This will return a CrawledAccounts object or a CrawlError.
     pub async fn run(self) -> Result<CrawledAccounts, CrawlError> {
         let start = Instant::now();
@@ -126,7 +135,7 @@ impl Crawler {
             .filter(|tx| self.tx_filters.iter().all(|filter| filter.filter(tx)))
             .collect();
 
-        println!("filtered tranasctions: {:?}", filtered_transactions.len());
+        println!("filtered transactions: {:?}", filtered_transactions.len());
 
         let ix_accounts = Arc::new(Mutex::new(HashMap::new()));
 
@@ -214,13 +223,20 @@ impl Crawler {
 
 // Associated functions for common crawl patterns
 impl Crawler {
-    /// Get all mint and metadata accounts for a give candy machine v2 id or candy machine v2 creator.
-    /// This only parses mintNFT instructions from Candy Machine V2 so is not directly equivalent to get_first_verified_creator_mints
-    /// which is a more general call.
+    /// Create and run with default settings a Crawler for cmv2 mints.
     pub async fn get_cmv2_mints(
         client: RpcClient,
         candy_machine_pubkey: Pubkey,
     ) -> Result<CrawledAccounts, CrawlError> {
+        Crawler::create_cmv2_mints(client, candy_machine_pubkey)
+            .run()
+            .await
+    }
+
+    /// Create a crawler to get all mint and metadata accounts for a give candy machine v2 id or candy machine v2 creator.
+    /// This only parses mintNFT instructions from Candy Machine V2 so is not directly equivalent to get_first_verified_creator_mints
+    /// which is a more general call.
+    pub fn create_cmv2_mints(client: RpcClient, candy_machine_pubkey: Pubkey) -> Crawler {
         let has_program_id = TxHasProgramId::new(CMV2_PROGRAM_ID);
         let ix_program_id = IxProgramIdFilter::new(CMV2_PROGRAM_ID);
         let ix_num_accounts = IxNumberAccounts::GreaterThanOrEqual(16);
@@ -237,16 +253,23 @@ impl Crawler {
             .add_account_index(metadata_account)
             .add_account_index(mint_account);
 
-        crawler.run().await
+        crawler
     }
 
-    /// Get all mint accounts for the given first verified creator. This works by by finding all the
-    /// `create_master_edition` and `create_master_edition_v3` instructions from calls to the token-metadata program.
-    /// This is more general than get_cmv2_mints as it can find mints not created via a candy machine.
+    /// Create and run with default settings a Crawler for first verified creators.
     pub async fn get_first_verified_creator_mints(
         client: RpcClient,
         creator: Pubkey,
     ) -> Result<CrawledAccounts, CrawlError> {
+        Crawler::create_first_verified_creator_mints(client, creator)
+            .run()
+            .await
+    }
+
+    /// Create a crawler to get all mint accounts for the given first verified creator. This works by by finding all the
+    /// `create_master_edition` and `create_master_edition_v3` instructions from calls to the token-metadata program.
+    /// This is more general than get_cmv2_mints as it can find mints not created via a candy machine.
+    pub fn create_first_verified_creator_mints(client: RpcClient, creator: Pubkey) -> Crawler {
         // We're looking for all the create_master_edition and create_master_edition_v2 instructions and
         // getting the mint accounts from them.
         // Creating a master edition means it's a Metaplex NFT and not a SPL token or a Fungible Asset.
@@ -268,7 +291,7 @@ impl Crawler {
             .add_ix_or_filters(vec![ix_data, ix_data2])
             .add_account_index(mint);
 
-        crawler.run().await
+        crawler
     }
 }
 
@@ -294,7 +317,9 @@ impl Crawler {
             let sigs = self
                 .client
                 .get_signatures_for_address_with_config(&self.address, config)
-                .map_err(|err| CrawlError::ClientError(err.kind))?;
+                .map_err(|err| {
+                    CrawlError::ClientError(err.to_string(), self.address.to_string())
+                })?;
 
             let last_sig = match sigs.last() {
                 Some(sig) => sig,
@@ -340,12 +365,12 @@ impl Crawler {
         signatures: Vec<Signature>,
     ) -> Result<Vec<EncodedConfirmedTransaction>, CrawlError> {
         let mut transactions = Vec::new();
-        // let errors = Vec::new();
+        let mut errors = Vec::new();
 
         let mut tx_tasks = Vec::new();
 
         // Create a Semaphore to limit the number of concurrent requests.
-        let sem = Arc::new(Semaphore::new(1000));
+        let sem = Arc::new(Semaphore::new(self.concurrency_limit));
 
         for signature in signatures {
             let permit = Arc::clone(&sem).acquire_owned().await.unwrap();
@@ -361,8 +386,12 @@ impl Crawler {
             let res = task.await.unwrap();
             if let Ok(tx) = res {
                 transactions.push(tx);
+            } else {
+                errors.push(res.unwrap_err());
             }
         }
+
+        // TODO: add logging for errors
 
         Ok(transactions)
     }
@@ -372,9 +401,12 @@ async fn get_transaction(
     client: Arc<RpcClient>,
     signature: Signature,
 ) -> Result<EncodedConfirmedTransaction, CrawlError> {
-    let transaction = client
-        .get_transaction(&signature, UiTransactionEncoding::JsonParsed)
-        .map_err(|err| CrawlError::ClientError(err.kind))?;
+    // Retry because occasionally Google Big Table returns empty values, apparently.
+    let result = retry(Fixed::from_millis(500).take(10), || {
+        client.get_transaction(&signature, UiTransactionEncoding::JsonParsed)
+    });
+    let transaction =
+        result.map_err(|err| CrawlError::ClientError(err.to_string(), signature.to_string()))?;
 
     Ok(transaction)
 }

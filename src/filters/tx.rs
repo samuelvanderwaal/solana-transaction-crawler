@@ -22,7 +22,9 @@ impl TxFilter for CmV2BotTaxTxFilter {
         match &tx.transaction.meta {
             Some(meta) => {
                 if let Some(messages) = &meta.log_messages {
-                    !messages.contains(&CMV2_BOT_TAX_MSG.to_string())
+                    !messages
+                        .iter()
+                        .any(|m| m.contains(&CMV2_BOT_TAX_MSG.to_string()))
                 } else {
                     true
                 }

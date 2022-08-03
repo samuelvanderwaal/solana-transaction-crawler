@@ -4,3 +4,4 @@ pub const TOKEN_METADATA_PROGAM_ID: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8b
 pub const CMV2_BOT_TAX_MSG: &str = "Candy Machine Botting is taxed at";
 pub const CREATE_MASTER_EDITION_DATA: &str = "ZbhHTZcMWdXcj";
 pub const CREATE_MASTER_EDITION_V3_DATA: &str = "xQfWWpLr8ajWF";
+pub const DEFAULT_CONCURRENCY_LIMIT: usize = 100;
