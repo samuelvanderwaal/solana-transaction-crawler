@@ -173,10 +173,16 @@ impl Crawler {
                 }
             }
 
+            // If ix_or_filters are empty it causes the filter to fail so we use this
+            // to control when filters are applied.
+            let or_filters = self.ix_or_filters.is_empty();
+
             let filtered_instructions: Vec<&UiParsedInstruction> = instructions
                 .into_iter()
                 .filter(|ix| self.ix_filters.iter().all(|filter| filter.filter(ix)))
-                // .filter(|ix| self.ix_or_filters.iter().any(|filter| filter.filter(ix)))
+                .filter(|ix| {
+                    or_filters || self.ix_or_filters.iter().any(|filter| filter.filter(ix))
+                })
                 .collect();
 
             // Fetch accounts from instructions
