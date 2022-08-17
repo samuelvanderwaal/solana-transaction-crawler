@@ -4,7 +4,7 @@ use super::*;
 pub struct SuccessfulTxFilter;
 
 impl TxFilter for SuccessfulTxFilter {
-    fn filter(&self, tx: &EncodedConfirmedTransaction) -> bool {
+    fn filter(&self, tx: &EncodedConfirmedTransactionWithStatusMeta) -> bool {
         match &tx.transaction.meta {
             Some(meta) => meta.err.is_none(),
             None => false,
@@ -17,7 +17,7 @@ impl TxFilter for SuccessfulTxFilter {
 pub struct CmV2BotTaxTxFilter;
 
 impl TxFilter for CmV2BotTaxTxFilter {
-    fn filter(&self, tx: &EncodedConfirmedTransaction) -> bool {
+    fn filter(&self, tx: &EncodedConfirmedTransactionWithStatusMeta) -> bool {
         // Filter out bot tax transactions, pass through everything else.
         match &tx.transaction.meta {
             Some(meta) => {
@@ -38,7 +38,7 @@ impl TxFilter for CmV2BotTaxTxFilter {
 pub struct Cmv2TxFilter;
 
 impl TxFilter for Cmv2TxFilter {
-    fn filter(&self, tx: &EncodedConfirmedTransaction) -> bool {
+    fn filter(&self, tx: &EncodedConfirmedTransactionWithStatusMeta) -> bool {
         match &tx.transaction.transaction {
             EncodedTransaction::Json(ui_tx) => match &ui_tx.message {
                 UiMessage::Raw(msg) => msg.account_keys.contains(&CMV2_PROGRAM_ID.to_string()),
@@ -67,7 +67,7 @@ impl TxHasProgramId {
 }
 
 impl TxFilter for TxHasProgramId {
-    fn filter(&self, tx: &EncodedConfirmedTransaction) -> bool {
+    fn filter(&self, tx: &EncodedConfirmedTransactionWithStatusMeta) -> bool {
         match &tx.transaction.transaction {
             EncodedTransaction::Json(ui_tx) => match &ui_tx.message {
                 UiMessage::Raw(msg) => msg.account_keys.contains(&self.program_id),
