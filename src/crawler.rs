@@ -162,8 +162,7 @@ impl Crawler {
                 if let Some(inner_instructions) = &meta.inner_instructions {
                     let mut parsed_ixs = inner_instructions
                         .iter()
-                        .map(|ix| &ix.instructions)
-                        .flatten()
+                        .flat_map(|ix| &ix.instructions)
                         .map(|ix| match ix {
                             UiInstruction::Parsed(ix) => ix,
                             _ => panic!("not a parsed instruction"),

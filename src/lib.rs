@@ -7,7 +7,7 @@
 //! work with very new data.
 //!
 //! ## Recommended Client Dependencies
-//! ```
+//! ```rust,ignore
 //! [dependencies]
 //! anyhow = "1.0.58"
 //! solana-client = "~1.9.29"
@@ -19,7 +19,7 @@
 //!
 //! Construct filters to get mints from a candy machine.
 //!
-//! ```
+//! ```rust,ignore
 //! use anyhow::Result;
 //! use solana_client::rpc_client::RpcClient;
 //! use solana_transaction_crawler::{
@@ -75,7 +75,7 @@
 //! For common use cases, there are pre-built methods that can be used. For example,
 //! to get all the mints from a Candy Machine V2 instance:
 //!
-//! ```
+//! ```rust,ignore
 //! use anyhow::Result;
 //! use solana_client::rpc_client::RpcClient;
 //! use solana_transaction_crawler::crawler::Crawler;
