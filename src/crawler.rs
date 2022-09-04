@@ -3,8 +3,8 @@ use retry::{delay::Fixed, retry};
 use solana_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient};
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Signature};
 use solana_transaction_status::{
-    EncodedConfirmedTransaction, EncodedTransaction, UiInstruction, UiMessage, UiParsedInstruction,
-    UiTransactionEncoding,
+    EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, UiInstruction, UiMessage,
+    UiParsedInstruction, UiTransactionEncoding,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -130,7 +130,7 @@ impl Crawler {
             tx_time - sigs_time,
         );
 
-        let filtered_transactions: Vec<&EncodedConfirmedTransaction> = transactions
+        let filtered_transactions: Vec<&EncodedConfirmedTransactionWithStatusMeta> = transactions
             .iter()
             .filter(|tx| self.tx_filters.iter().all(|filter| filter.filter(tx)))
             .collect();
@@ -369,7 +369,7 @@ impl Crawler {
     async fn get_transactions_from_signatures(
         &self,
         signatures: Vec<Signature>,
-    ) -> Result<Vec<EncodedConfirmedTransaction>, CrawlError> {
+    ) -> Result<Vec<EncodedConfirmedTransactionWithStatusMeta>, CrawlError> {
         let mut transactions = Vec::new();
         let mut errors = Vec::new();
 
@@ -406,7 +406,7 @@ impl Crawler {
 async fn get_transaction(
     client: Arc<RpcClient>,
     signature: Signature,
-) -> Result<EncodedConfirmedTransaction, CrawlError> {
+) -> Result<EncodedConfirmedTransactionWithStatusMeta, CrawlError> {
     // Retry because occasionally Google Big Table returns empty values, apparently.
     let result = retry(Fixed::from_millis(500).take(10), || {
         client.get_transaction(&signature, UiTransactionEncoding::JsonParsed)
