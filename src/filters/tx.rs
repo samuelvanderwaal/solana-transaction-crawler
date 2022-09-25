@@ -81,3 +81,31 @@ impl TxFilter for TxHasProgramId {
         }
     }
 }
+
+/// This filter passes through all transactions where the provided address is a signer.
+pub struct TxHasSigner {
+    address: String,
+}
+
+impl TxHasSigner {
+    pub fn new(address: &str) -> Self {
+        TxHasSigner {
+            address: address.to_string(),
+        }
+    }
+}
+
+impl TxFilter for TxHasSigner {
+    fn filter(&self, tx: &EncodedConfirmedTransactionWithStatusMeta) -> bool {
+        match &tx.transaction.transaction {
+            EncodedTransaction::Json(ui_tx) => match &ui_tx.message {
+                UiMessage::Raw(_) => panic!("Not a parsed tx message"),
+                UiMessage::Parsed(msg) => msg
+                    .account_keys
+                    .iter()
+                    .any(|a| a.pubkey == self.address && a.signer),
+            },
+            _ => panic!("not Json encoded"),
+        }
+    }
+}
