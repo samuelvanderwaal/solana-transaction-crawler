@@ -333,7 +333,7 @@ impl Crawler {
         let ix_data2 = IxDataFilter::new(CREATE_MASTER_EDITION_V3_DATA);
         let has_authority = IxHasAccountAtIndexFilter::new(&authority.to_string(), 3);
 
-        let mint = IxAccount::unparsed("mint", 2);
+        let mint = IxAccount::unparsed("mint", 1);
 
         let mut crawler = Crawler::new(client, authority);
         crawler
