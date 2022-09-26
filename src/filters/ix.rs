@@ -88,3 +88,53 @@ impl IxFilter for IxMintToFilter {
         }
     }
 }
+
+pub struct IxHasAccountFilter {
+    account: String,
+}
+
+impl IxHasAccountFilter {
+    pub fn new(account: &str) -> Self {
+        Self {
+            account: account.to_string(),
+        }
+    }
+}
+
+impl IxFilter for IxHasAccountFilter {
+    fn filter(&self, ix: &UiParsedInstruction) -> bool {
+        match ix {
+            UiParsedInstruction::Parsed(_ix) => true,
+            UiParsedInstruction::PartiallyDecoded(ix) => {
+                ix.accounts.iter().any(|account| account == &self.account)
+            }
+        }
+    }
+}
+
+pub struct IxHasAccountAtIndexFilter {
+    account: String,
+    index: usize,
+}
+
+impl IxHasAccountAtIndexFilter {
+    pub fn new(account: &str, index: usize) -> Self {
+        Self {
+            account: account.to_string(),
+            index,
+        }
+    }
+}
+
+impl IxFilter for IxHasAccountAtIndexFilter {
+    fn filter(&self, ix: &UiParsedInstruction) -> bool {
+        match ix {
+            UiParsedInstruction::Parsed(_ix) => false,
+            UiParsedInstruction::PartiallyDecoded(ix) => ix
+                .accounts
+                .get(self.index)
+                .map(|account| account == &self.account)
+                .unwrap_or(false),
+        }
+    }
+}

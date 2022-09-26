@@ -243,8 +243,14 @@ impl Crawler {
     /// which is a more general call.
     pub fn create_cmv2_mints(client: RpcClient, candy_machine_pubkey: Pubkey) -> Crawler {
         let has_program_id = TxHasProgramId::new(CMV2_PROGRAM_ID);
+
         let ix_program_id = IxProgramIdFilter::new(CMV2_PROGRAM_ID);
         let ix_num_accounts = IxNumberAccounts::GreaterThanOrEqual(16);
+        let candy_machine_id_ix_filter =
+            IxHasAccountAtIndexFilter::new(&candy_machine_pubkey.to_string(), 0);
+        let candy_machine_creator_ix_filter =
+            IxHasAccountAtIndexFilter::new(&candy_machine_pubkey.to_string(), 1);
+
         let metadata_account = IxAccount::unparsed("metadata", 4);
         let mint_account = IxAccount::unparsed("mint", 5);
 
@@ -255,6 +261,44 @@ impl Crawler {
             .add_tx_filter(CmV2BotTaxTxFilter)
             .add_ix_filter(ix_program_id)
             .add_ix_filter(ix_num_accounts)
+            .add_ix_or_filters(vec![
+                candy_machine_id_ix_filter,
+                candy_machine_creator_ix_filter,
+            ])
+            .add_account_index(metadata_account)
+            .add_account_index(mint_account);
+
+        crawler
+    }
+
+    /// Create and run with default settings a Crawler for cmv2 mints.
+    pub async fn get_cmv1_mints(
+        client: RpcClient,
+        candy_machine_pubkey: Pubkey,
+    ) -> Result<CrawledAccounts, CrawlError> {
+        Crawler::create_cmv1_mints(client, candy_machine_pubkey)
+            .run()
+            .await
+    }
+
+    pub fn create_cmv1_mints(client: RpcClient, candy_machine_pubkey: Pubkey) -> Crawler {
+        let has_program_id = TxHasProgramId::new(CMV1_PROGRAM_ID);
+
+        let ix_program_id = IxProgramIdFilter::new(CMV1_PROGRAM_ID);
+        let ix_num_accounts = IxNumberAccounts::EqualTo(14);
+        let ix_has_account = IxHasAccountAtIndexFilter::new(&candy_machine_pubkey.to_string(), 1);
+
+        let metadata_account = IxAccount::unparsed("metadata", 4);
+        let mint_account = IxAccount::unparsed("mint", 5);
+
+        let mut crawler = Crawler::new(client, candy_machine_pubkey);
+        crawler
+            .add_tx_filter(has_program_id)
+            .add_tx_filter(SuccessfulTxFilter)
+            .add_tx_filter(CmV2BotTaxTxFilter)
+            .add_ix_filter(ix_program_id)
+            .add_ix_filter(ix_num_accounts)
+            .add_ix_filter(ix_has_account)
             .add_account_index(metadata_account)
             .add_account_index(mint_account);
 
@@ -262,37 +306,42 @@ impl Crawler {
     }
 
     /// Create and run with default settings a Crawler for first verified creators.
-    pub async fn get_first_verified_creator_mints(
+    pub async fn get_mints_by_update_authority(
         client: RpcClient,
         creator: Pubkey,
     ) -> Result<CrawledAccounts, CrawlError> {
-        Crawler::create_first_verified_creator_mints(client, creator)
+        Crawler::create_mints_by_update_authority(client, creator)
             .run()
             .await
     }
 
-    /// Create a crawler to get all mint accounts for the given first verified creator. This works by by finding all the
+    /// Create a crawler to get all mint accounts created by an update authority. This works by by finding all the
     /// `create_master_edition` and `create_master_edition_v3` instructions from calls to the token-metadata program.
     /// This is more general than get_cmv2_mints as it can find mints not created via a candy machine.
-    pub fn create_first_verified_creator_mints(client: RpcClient, creator: Pubkey) -> Crawler {
-        // We're looking for all the create_master_edition and create_master_edition_v2 instructions and
+    pub fn create_mints_by_update_authority(client: RpcClient, authority: Pubkey) -> Crawler {
+        // We're looking for all the create_master_edition and create_master_edition_v3 instructions and
         // getting the mint accounts from them.
         // Creating a master edition means it's a Metaplex NFT and not a SPL token or a Fungible Asset.
         // The CREATE_MASTER_EDITION_DATA constant has the base58 encoded data for a create_master_edition call
         // where the max_supply is set to be Some(0), so this also filters out master editions with prints.
 
         let has_program_id = TxHasProgramId::new(TOKEN_METADATA_PROGAM_ID);
+        // let has_signer = TxHasSigner::new(&authority.to_string());
+
         let ix_program_id = IxProgramIdFilter::new(TOKEN_METADATA_PROGAM_ID);
         let ix_data = IxDataFilter::new(CREATE_MASTER_EDITION_DATA);
         let ix_data2 = IxDataFilter::new(CREATE_MASTER_EDITION_V3_DATA);
-        let mint = IxAccount::unparsed("mint", 1);
+        let has_authority = IxHasAccountAtIndexFilter::new(&authority.to_string(), 3);
 
-        let mut crawler = Crawler::new(client, creator);
+        let mint = IxAccount::unparsed("mint", 2);
+
+        let mut crawler = Crawler::new(client, authority);
         crawler
             .add_tx_filter(has_program_id)
             .add_tx_filter(SuccessfulTxFilter)
             .add_tx_filter(CmV2BotTaxTxFilter)
             .add_ix_filter(ix_program_id)
+            .add_ix_filter(has_authority)
             .add_ix_or_filters(vec![ix_data, ix_data2])
             .add_account_index(mint);
 
