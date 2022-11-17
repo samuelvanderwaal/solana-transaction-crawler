@@ -11,7 +11,7 @@ use std::{
     str::FromStr,
     sync::{Arc, Mutex},
 };
-use tokio::{sync::Semaphore, time::Instant};
+use tokio::sync::Semaphore;
 
 use crate::{constants::*, errors::CrawlError, filters::*};
 
@@ -70,6 +70,18 @@ impl Crawler {
         }
     }
 
+    pub fn new_arc_client(client: Arc<RpcClient>, address: Pubkey) -> Self {
+        Crawler {
+            client,
+            address,
+            tx_filters: Vec::new(),
+            ix_filters: Vec::new(),
+            ix_or_filters: Vec::new(),
+            account_indices: Vec::new(),
+            concurrency_limit: DEFAULT_CONCURRENCY_LIMIT,
+        }
+    }
+
     /// Add a transaction filter to the Crawler. These filtesr are additive and will be applied as logical ANDs.
     pub fn add_tx_filter<F: TxFilter + 'static + Send + Sync>(&mut self, filter: F) -> &mut Self {
         self.tx_filters.push(Box::new(filter));
@@ -112,30 +124,15 @@ impl Crawler {
     }
 
     /// Run the crawler. This will return a CrawledAccounts object or a CrawlError.
-    pub async fn run(self) -> Result<CrawledAccounts, CrawlError> {
-        let start = Instant::now();
+    pub async fn run(&self) -> Result<CrawledAccounts, CrawlError> {
         let signatures = self.get_all_signatures_for_id().await?;
-        let sigs_time = Instant::now();
-        println!(
-            "Retrieved {:?} signatures in {:?}",
-            signatures.len(),
-            sigs_time - start
-        );
-        let transactions = self.get_transactions_from_signatures(signatures).await?;
 
-        let tx_time = Instant::now();
-        println!(
-            "Retrieved {:?} transactions in {:?}",
-            transactions.len(),
-            tx_time - sigs_time,
-        );
+        let transactions = self.get_transactions_from_signatures(signatures).await?;
 
         let filtered_transactions: Vec<&EncodedConfirmedTransactionWithStatusMeta> = transactions
             .iter()
             .filter(|tx| self.tx_filters.iter().all(|filter| filter.filter(tx)))
             .collect();
-
-        println!("filtered transactions: {:?}", filtered_transactions.len());
 
         let ix_accounts = Arc::new(Mutex::new(HashMap::new()));
 
