@@ -3,8 +3,8 @@ use retry::{delay::Fixed, retry};
 use solana_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient};
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Signature};
 use solana_transaction_status::{
-    EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, UiInstruction, UiMessage,
-    UiParsedInstruction, UiTransactionEncoding,
+    option_serializer::OptionSerializer, EncodedConfirmedTransactionWithStatusMeta,
+    EncodedTransaction, UiInstruction, UiMessage, UiParsedInstruction, UiTransactionEncoding,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -156,7 +156,11 @@ impl Crawler {
 
             // Get all inner instructions and add them to the instructions list.
             if let Some(meta) = &tx.transaction.meta {
-                if let Some(inner_instructions) = &meta.inner_instructions {
+                let inner_instructions = match &meta.inner_instructions {
+                    OptionSerializer::Some(item) => Some(item),
+                    _ => None,
+                };
+                if let Some(inner_instructions) = inner_instructions {
                     let mut parsed_ixs = inner_instructions
                         .iter()
                         .flat_map(|ix| &ix.instructions)
