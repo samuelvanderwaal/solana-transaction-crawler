@@ -1,3 +1,5 @@
+use solana_transaction_status::option_serializer::OptionSerializer;
+
 use super::*;
 
 /// This filter passes through all successful transactions, rejecting any with errors.
@@ -21,7 +23,11 @@ impl TxFilter for CmV2BotTaxTxFilter {
         // Filter out bot tax transactions, pass through everything else.
         match &tx.transaction.meta {
             Some(meta) => {
-                if let Some(messages) = &meta.log_messages {
+                let log_messages = match &meta.log_messages {
+                    OptionSerializer::Some(item) => Some(item),
+                    _ => None,
+                };
+                if let Some(messages) = log_messages {
                     !messages
                         .iter()
                         .any(|m| m.contains(&CMV2_BOT_TAX_MSG.to_string()))
